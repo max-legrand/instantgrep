@@ -46,21 +46,22 @@ jobs:
     name: Update Homebrew Formula
     needs: release
     runs-on: ubuntu-latest
+    environment: prd
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-
       - name: Get version
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Download checksums
         run: |
-          sleep 10  # wait for release assets to be available
+          sleep 10
           curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/instantgrep-darwin-arm64.tar.gz.sha256" -o darwin.sha256
           curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/instantgrep-linux-amd64.tar.gz.sha256" -o linux.sha256
 
+      - name: Clone homebrew tap
+        run: |
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/${{ github.repository_owner }}/homebrew-igrep.git tap
+        
       - name: Update formula
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -68,24 +69,24 @@ jobs:
           LINUX_SHA=$(cut -d ' ' -f1 linux.sha256)
           REPO="${{ github.repository }}"
 
-          cat > Formula/instantgrep.rb << EOF
+          cat > tap/Formula/instantgrep.rb << 'FORMULA'
           class Instantgrep < Formula
             desc "Fast regex search using trigram indexes"
-            homepage "https://github.com/${REPO}"
-            version "${VERSION}"
+            homepage "https://github.com/REPO_PLACEHOLDER"
+            version "VERSION_PLACEHOLDER"
             license "MIT"
 
             on_macos do
               on_arm do
-                url "https://github.com/${REPO}/releases/download/v${VERSION}/instantgrep-darwin-arm64.tar.gz"
-                sha256 "${DARWIN_SHA}"
+                url "https://github.com/REPO_PLACEHOLDER/releases/download/vVERSION_PLACEHOLDER/instantgrep-darwin-arm64.tar.gz"
+                sha256 "DARWIN_SHA_PLACEHOLDER"
               end
             end
 
             on_linux do
               on_intel do
-                url "https://github.com/${REPO}/releases/download/v${VERSION}/instantgrep-linux-amd64.tar.gz"
-                sha256 "${LINUX_SHA}"
+                url "https://github.com/REPO_PLACEHOLDER/releases/download/vVERSION_PLACEHOLDER/instantgrep-linux-amd64.tar.gz"
+                sha256 "LINUX_SHA_PLACEHOLDER"
               end
             end
 
@@ -94,18 +95,27 @@ jobs:
             def install
               bin.install "instantgrep"
               bin.install "instantgrep-bench"
+              bin.install_symlink "instantgrep" => "igrep"
+              bin.install_symlink "instantgrep" => "ig"
             end
 
             test do
               assert_match "instantgrep", shell_output("#{bin}/instantgrep --help")
             end
           end
-          EOF
+          FORMULA
 
-      - name: Commit formula update
+          sed -i "s|REPO_PLACEHOLDER|${REPO}|g" tap/Formula/instantgrep.rb
+          sed -i "s|VERSION_PLACEHOLDER|${VERSION}|g" tap/Formula/instantgrep.rb
+          sed -i "s|DARWIN_SHA_PLACEHOLDER|${DARWIN_SHA}|g" tap/Formula/instantgrep.rb
+          sed -i "s|LINUX_SHA_PLACEHOLDER|${LINUX_SHA}|g" tap/Formula/instantgrep.rb
+
+      - name: Push formula update
         run: |
+          cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/instantgrep.rb
-          git commit -m "Update formula to v${{ steps.version.outputs.version }}"
+          git commit -m "Update instantgrep to v${{ steps.version.outputs.version }}"
           git push
+
