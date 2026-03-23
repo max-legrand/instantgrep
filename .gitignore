@@ -1,0 +1,17 @@
+# Build artifacts
+/_build/
+/deps/
+/igrep
+*.beam
+*.ez
+
+# Index data
+.igrep/
+
+# IDE
+.elixir_ls/
+.idea/
+*.iml
+
+# OS
+.DS_Store

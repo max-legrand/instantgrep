@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_name: igrep-linux-amd64
+          - os: macos-latest
+            asset_name: igrep-darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.16"
+
+      - run: mix deps.get
+      - run: mix test
+      - run: mix escript.build
+
+      - name: Package
+        run: |
+          tar czf ${{ matrix.asset_name }}.tar.gz igrep igrep-bench README.md LICENSE
+          shasum -a 256 ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.asset_name }}.tar.gz
+            ${{ matrix.asset_name }}.tar.gz.sha256
+
+  update-formula:
+    name: Update Homebrew Formula
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Get version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download checksums
+        run: |
+          sleep 10  # wait for release assets to be available
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/igrep-darwin-arm64.tar.gz.sha256" -o darwin.sha256
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/igrep-linux-amd64.tar.gz.sha256" -o linux.sha256
+
+      - name: Update formula
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          DARWIN_SHA=$(cut -d ' ' -f1 darwin.sha256)
+          LINUX_SHA=$(cut -d ' ' -f1 linux.sha256)
+          REPO="${{ github.repository }}"
+
+          cat > Formula/igrep.rb << EOF
+          class Igrep < Formula
+            desc "Fast regex search using trigram indexes"
+            homepage "https://github.com/${REPO}"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/${REPO}/releases/download/v${VERSION}/igrep-darwin-arm64.tar.gz"
+                sha256 "${DARWIN_SHA}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/${REPO}/releases/download/v${VERSION}/igrep-linux-amd64.tar.gz"
+                sha256 "${LINUX_SHA}"
+              end
+            end
+
+            depends_on "erlang"
+
+            def install
+              bin.install "igrep"
+              bin.install "igrep-bench"
+            end
+
+            test do
+              assert_match "igrep", shell_output("#{bin}/igrep --help")
+            end
+          end
+          EOF
+
+      - name: Commit formula update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/igrep.rb
+          git commit -m "Update formula to v${{ steps.version.outputs.version }}"
+          git push

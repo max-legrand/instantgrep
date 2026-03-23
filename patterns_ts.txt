@@ -1,0 +1,33 @@
+# Generic TypeScript/JavaScript patterns for benchmarking
+# These are non-proprietary patterns targeting common constructs
+export default
+import.*from
+async function
+await\s+\w+
+interface\s+\w+
+type\s+\w+\s*=
+extends\s+\w+
+implements\s+\w+
+Promise<
+try\s*{
+catch\s*\(
+throw new Error
+console\.\w+
+process\.env\.\w+
+module\.exports
+require\(
+export\s+const
+useState|useEffect|useCallback
+React\.FC|React\.Component
+return\s+null
+TODO|FIXME|HACK|XXX
+@deprecated
+\.then\(|\.catch\(
+new Map\(|new Set\(
+Object\.keys|Object\.values|Object\.entries
+Array\.from|Array\.isArray
+JSON\.parse|JSON\.stringify
+setTimeout|setInterval
+class\s+\w+\s+extends
+constructor\s*\(
+static\s+\w+
