@@ -192,7 +192,12 @@ defmodule Instantgrep.Bench do
       row =
         if has_grep do
           grep_median = median(result.grep)
-          speedup = if instantgrep_median > 0, do: Float.round(grep_median / instantgrep_median, 1), else: 0.0
+
+          speedup =
+            if instantgrep_median > 0,
+              do: Float.round(grep_median / instantgrep_median, 1),
+              else: 0.0
+
           row ++ [format_time(grep_median), "#{speedup}x"]
         else
           row
@@ -201,7 +206,12 @@ defmodule Instantgrep.Bench do
       row =
         if has_rg do
           rg_median = median(result.rg)
-          speedup = if instantgrep_median > 0, do: Float.round(rg_median / instantgrep_median, 1), else: 0.0
+
+          speedup =
+            if instantgrep_median > 0,
+              do: Float.round(rg_median / instantgrep_median, 1),
+              else: 0.0
+
           row ++ [format_time(rg_median), "#{speedup}x"]
         else
           row
