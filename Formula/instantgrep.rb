@@ -23,6 +23,8 @@ class Instantgrep < Formula
   def install
     bin.install "instantgrep"
     bin.install "instantgrep-bench"
+    bin.install_symlink "instantgrep" => "igrep"
+    bin.install_symlink "instantgrep" => "ig"
   end
 
   test do
