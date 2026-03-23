@@ -60,7 +60,7 @@ jobs:
 
       - name: Clone homebrew tap
         run: |
-          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/${{ github.repository_owner }}/homebrew-igrep.git tap
+          git clone https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/${{ github.repository_owner }}/homebrew-instantgrep.git tap
         
       - name: Update formula
         run: |
