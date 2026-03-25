@@ -98,14 +98,13 @@ defmodule Instantgrep.Daemon do
         {:ok, _} ->
           query_tree = Query.decompose(pattern)
 
+          # Always lookup trigrams case-insensitively - the index may have mixed case
+          # trigrams, and we don't want to miss candidates. The final regex match
+          # will apply the actual case sensitivity.
           candidate_ids =
             Query.evaluate(query_tree, fn trigram ->
-              lookup =
-                if String.contains?(Map.get(opts, "flags", ""), "i"),
-                  do: String.downcase(trigram),
-                  else: trigram
-
-              Index.lookup(index, lookup)
+              # Downcase for lookup to find all potential matches
+              Index.lookup(index, String.downcase(trigram))
             end)
 
           candidate_files =

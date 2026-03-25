@@ -82,12 +82,18 @@ defmodule Instantgrep.Index do
     )
     |> Enum.each(fn {:ok, {file_id, masks}} ->
       Enum.each(masks, fn {trigram, {next_mask, loc_mask}} ->
-        case :ets.lookup(postings_table, trigram) do
-          [{^trigram, postings}] ->
-            :ets.insert(postings_table, {trigram, [{file_id, next_mask, loc_mask} | postings]})
+        # Store trigrams as lowercase for case-insensitive index lookup
+        downcased_trigram = String.downcase(trigram)
+
+        case :ets.lookup(postings_table, downcased_trigram) do
+          [{^downcased_trigram, postings}] ->
+            :ets.insert(
+              postings_table,
+              {downcased_trigram, [{file_id, next_mask, loc_mask} | postings]}
+            )
 
           [] ->
-            :ets.insert(postings_table, {trigram, [{file_id, next_mask, loc_mask}]})
+            :ets.insert(postings_table, {downcased_trigram, [{file_id, next_mask, loc_mask}]})
         end
       end)
     end)
