@@ -86,7 +86,7 @@ defmodule Instantgrep.Daemon do
         pattern = String.trim_trailing(line, "\n")
 
         case Regex.compile(pattern) do
-          {:ok, regex} ->
+          {:ok, _regex} ->
             query_tree = Query.decompose(pattern)
 
             candidate_ids =
@@ -95,7 +95,7 @@ defmodule Instantgrep.Daemon do
               end)
 
             candidate_files = Index.resolve_files(index, candidate_ids)
-            results = Matcher.match_files(candidate_files, regex)
+            results = Matcher.match_files(candidate_files, {pattern, ""})
             output = Matcher.format_results(results)
 
             if output != "" do

@@ -16,14 +16,22 @@ defmodule Instantgrep.Matcher do
   @doc """
   Match a regex against a list of candidate files in parallel.
 
+  Accepts either a compiled `%Regex{}` or a `{pattern, flags}` tuple.
+  When a tuple is given the regex is compiled fresh inside each Task so
+  that no compiled regex term is ever sent across BEAM process boundaries
+  (doing so triggers `size_object: matchstate term not allowed` / SIGABRT).
+
   Returns a list of `%{file: path, line: number, content: text}` maps,
   sorted by file path and line number.
   """
-  @spec match_files([String.t()], Regex.t()) :: [match_result()]
-  def match_files(file_paths, regex) do
+  @spec match_files([String.t()], Regex.t() | {String.t(), String.t()}) :: [match_result()]
+  def match_files(file_paths, {pattern, flags}) do
     file_paths
     |> Task.async_stream(
-      fn path -> match_single_file(path, regex) end,
+      fn path ->
+        {:ok, regex} = Regex.compile(pattern, flags)
+        match_single_file(path, regex)
+      end,
       max_concurrency: System.schedulers_online() * 2,
       ordered: false,
       timeout: 10_000
@@ -35,12 +43,18 @@ defmodule Instantgrep.Matcher do
     |> Enum.sort_by(fn %{file: f, line: l} -> {f, l} end)
   end
 
+  def match_files(file_paths, %Regex{} = regex) do
+    source = Regex.source(regex)
+    flags = Regex.opts(regex)
+    match_files(file_paths, {source, flags})
+  end
+
   @doc """
   Brute-force scan: match regex against all files in a directory.
 
   This is the fallback "grep mode" — no index used.
   """
-  @spec brute_force(String.t(), Regex.t()) :: [match_result()]
+  @spec brute_force(String.t(), Regex.t() | {String.t(), String.t()}) :: [match_result()]
   def brute_force(path, regex) do
     files =
       path
@@ -71,11 +85,16 @@ defmodule Instantgrep.Matcher do
         |> String.split("\n")
         |> Enum.with_index(1)
         |> Enum.flat_map(fn {line, line_num} ->
+          # Use return: :index to get a byte offset for the column.
+          # Avoid binary_part/3 + String.length/1 on the result: the sub-binary
+          # from binary_part retains a reference into the underlying matched
+          # binary, and in OTP 27 walking that term for grapheme counting causes
+          # `size_object: matchstate term not allowed` / SIGABRT in the BEAM GC.
+          # Reporting a byte-offset column is accurate for ASCII and acceptable
+          # for multibyte content — editors use byte offsets anyway.
           case Regex.run(regex, line, return: :index) do
             [{col_byte, _len} | _] ->
-              # Convert byte offset to 1-based character column
-              col = String.length(binary_part(line, 0, col_byte)) + 1
-              [%{file: path, line: line_num, col: col, content: line}]
+              [%{file: path, line: line_num, col: col_byte + 1, content: line}]
 
             nil ->
               []

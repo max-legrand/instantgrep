@@ -24,7 +24,9 @@ defmodule Instantgrep.Scanner do
     # Editors / tools
     ~r{/\.elixir_ls(/|$)},
     ~r{/\.idea(/|$)},
-    ~r{/\.vscode(/|$)}
+    ~r{/\.vscode(/|$)},
+    # instantgrep index cache
+    ~r{/\.instantgrep(/|$)}
   ]
 
   @binary_extensions ~w(.png .jpg .jpeg .gif .bmp .ico .svg .woff .woff2 .ttf .eot

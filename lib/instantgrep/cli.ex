@@ -120,7 +120,7 @@ defmodule Instantgrep.CLI do
   end
 
   defp execute_indexed(%{pattern: pattern, path: path, ignore_case: ignore_case}) do
-    regex = compile_regex(pattern, ignore_case)
+    flags = if ignore_case, do: "i", else: ""
 
     # Try loading existing index, or build one
     index =
@@ -149,24 +149,25 @@ defmodule Instantgrep.CLI do
     # Resolve file IDs to paths
     candidate_files = Index.resolve_files(index, candidate_ids)
 
-    # Full regex verification
-    results = Matcher.match_files(candidate_files, regex)
+    # Full regex verification — pass {pattern, flags} so the regex is compiled
+    # inside each Task process and never sent across BEAM process boundaries.
+    results = Matcher.match_files(candidate_files, {pattern, flags})
 
     # Output
     output = Matcher.format_results(results)
 
     if output != "" do
-      IO.puts(output)
+      IO.binwrite(:stdio, output <> "\n")
     end
   end
 
   defp execute_brute_force(%{pattern: pattern, path: path, ignore_case: ignore_case}) do
-    regex = compile_regex(pattern, ignore_case)
-    results = Matcher.brute_force(path, regex)
+    flags = if ignore_case, do: "i", else: ""
+    results = Matcher.brute_force(path, {pattern, flags})
     output = Matcher.format_results(results)
 
     if output != "" do
-      IO.puts(output)
+      IO.binwrite(:stdio, output <> "\n")
     end
   end
 
@@ -206,20 +207,6 @@ defmodule Instantgrep.CLI do
 
       {:error, _} ->
         :ok
-    end
-  end
-
-  defp compile_regex(pattern, true) do
-    case Regex.compile(pattern, "i") do
-      {:ok, regex} -> regex
-      {:error, {msg, _}} -> error_exit("Invalid regex: #{msg}")
-    end
-  end
-
-  defp compile_regex(pattern, false) do
-    case Regex.compile(pattern) do
-      {:ok, regex} -> regex
-      {:error, {msg, _}} -> error_exit("Invalid regex: #{msg}")
     end
   end
 
