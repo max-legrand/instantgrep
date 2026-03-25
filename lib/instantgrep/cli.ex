@@ -42,6 +42,7 @@ defmodule Instantgrep.CLI do
         strict: [
           build: :boolean,
           no_index: :boolean,
+          no_incremental: :boolean,
           ignore_case: :boolean,
           stats: :boolean,
           help: :boolean,
@@ -55,6 +56,7 @@ defmodule Instantgrep.CLI do
     %{
       build: Keyword.get(opts, :build, false),
       no_index: Keyword.get(opts, :no_index, false),
+      no_incremental: Keyword.get(opts, :no_incremental, false),
       ignore_case: Keyword.get(opts, :ignore_case, false),
       stats: Keyword.get(opts, :stats, false),
       help: Keyword.get(opts, :help, false),
@@ -72,9 +74,10 @@ defmodule Instantgrep.CLI do
     IO.puts(@moduledoc)
   end
 
-  defp execute(%{build: true, path: path}) do
+  defp execute(%{build: true, path: path, no_incremental: no_inc}) do
     IO.puts("Building index for #{path}...")
-    index = Index.build(path)
+    opts = if no_inc, do: [incremental: false], else: []
+    index = Index.build(path, opts)
     Index.save(index, path)
     Index.stats(index)
     IO.puts("Index saved to #{Index.cache_dir(path)}/")

@@ -46,11 +46,11 @@ defmodule Instantgrep.Index do
   @doc """
   Build a trigram index from a directory path.
 
-  Scans the directory for indexable files, extracts trigrams with masks,
-  and constructs an ETS-backed inverted index.
+  Uses file-level incremental updates - only reindexes files that have changed.
   """
   @spec build(String.t(), keyword()) :: t()
   def build(path, opts \\ []) do
+    incremental = Keyword.get(opts, :incremental, true)
     start_time = System.monotonic_time(:microsecond)
 
     files = Scanner.scan(path, opts)
@@ -58,13 +58,70 @@ defmodule Instantgrep.Index do
     postings_table = :ets.new(:instantgrep_postings, [:set, :public, read_concurrency: true])
     files_table = :ets.new(:instantgrep_files, [:set, :public, read_concurrency: true])
 
-    # Store file mappings
-    Enum.each(files, fn {file_id, file_path} ->
+    # Get current file mtimes
+    current_mtimes =
+      Enum.reduce(files, %{}, fn {file_id, file_path}, acc ->
+        case File.stat(file_path, [{:time, :posix}]) do
+          {:ok, %{mtime: mtime}} -> Map.put(acc, file_path, mtime)
+          _ -> acc
+        end
+      end)
+
+    # Try to load existing index and mtimes for incremental updates
+    existing_mtimes = if incremental, do: load_mtimes(path), else: %{}
+
+    # Determine which files need reindexing
+    {files_to_index, files_unchanged} =
+      if incremental and existing_mtimes != %{} do
+        Enum.reduce(files, {[], []}, fn {file_id, file_path}, {to_index, unchanged} ->
+          current_mtime = Map.get(current_mtimes, file_path)
+          existing_mtime = Map.get(existing_mtimes, file_path)
+
+          cond do
+            current_mtime == nil ->
+              # File deleted
+              {to_index, unchanged}
+
+            existing_mtime == nil or current_mtime > existing_mtime ->
+              # New or changed - needs reindexing
+              {[{file_id, file_path} | to_index], unchanged}
+
+            true ->
+              # Unchanged
+              {to_index, [{file_id, file_path} | unchanged]}
+          end
+        end)
+      else
+        {files, []}
+      end
+
+    # Load unchanged files from existing index if doing incremental
+    if incremental and existing_mtimes != %{} and files_unchanged != [] do
+      case load(path) do
+        {:ok, existing_index} ->
+          # Copy trigrams for unchanged files
+          existing_postings = :ets.tab2list(existing_index.postings_table)
+          :ets.insert(postings_table, existing_postings)
+
+          # Copy file paths
+          existing_files = :ets.tab2list(existing_index.files_table)
+
+          Enum.each(existing_files, fn {fid, fpath} ->
+            :ets.insert(files_table, {fid, fpath})
+          end)
+
+        _ ->
+          :ok
+      end
+    end
+
+    # Store file mappings for new/changed files
+    Enum.each(files_to_index, fn {file_id, file_path} ->
       :ets.insert(files_table, {file_id, file_path})
     end)
 
-    # Parallel trigram extraction
-    files
+    # Reindex changed files
+    files_to_index
     |> Task.async_stream(
       fn {file_id, file_path} ->
         case File.read(file_path) do
@@ -82,7 +139,6 @@ defmodule Instantgrep.Index do
     )
     |> Enum.each(fn {:ok, {file_id, masks}} ->
       Enum.each(masks, fn {trigram, {next_mask, loc_mask}} ->
-        # Store trigrams as lowercase for case-insensitive index lookup
         downcased_trigram = String.downcase(trigram)
 
         case :ets.lookup(postings_table, downcased_trigram) do
@@ -98,6 +154,11 @@ defmodule Instantgrep.Index do
       end)
     end)
 
+    # Save mtimes for next incremental build
+    if incremental do
+      save_mtimes(path, current_mtimes)
+    end
+
     elapsed = System.monotonic_time(:microsecond) - start_time
     trigram_count = :ets.info(postings_table, :size)
 
@@ -108,6 +169,25 @@ defmodule Instantgrep.Index do
       trigram_count: trigram_count,
       build_time_us: elapsed
     }
+  end
+
+  # Load file mtimes from disk
+  defp load_mtimes(base_dir) do
+    dir = cache_dir(base_dir)
+    path = Path.join(dir, "mtimes.dat")
+
+    if File.regular?(path) do
+      File.read!(path) |> :erlang.binary_to_term()
+    else
+      %{}
+    end
+  end
+
+  # Save file mtimes to disk
+  defp save_mtimes(base_dir, mtimes) do
+    dir = cache_dir(base_dir)
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "mtimes.dat"), :erlang.term_to_binary(mtimes))
   end
 
   @doc """
