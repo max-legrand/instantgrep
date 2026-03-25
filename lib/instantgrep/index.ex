@@ -19,9 +19,29 @@ defmodule Instantgrep.Index do
 
   defstruct [:postings_table, :files_table, :file_count, :trigram_count, :build_time_us]
 
-  @index_dir ".instantgrep"
   @postings_file "postings.dat"
   @files_file "files.dat"
+
+  @doc """
+  Return the cache directory for a given project root.
+
+  Uses `$XDG_CACHE_HOME/instantgrep/<hex>` (falling back to `~/.cache`) where
+  `<hex>` is a SHA-256 digest of the absolute project path. This keeps index
+  files out of the project tree entirely.
+  """
+  @spec cache_dir(String.t()) :: String.t()
+  def cache_dir(base_dir) do
+    base_dir = Path.expand(base_dir)
+    # Use the first 20 bytes (40 hex chars) — enough for uniqueness, short enough
+    # that the daemon socket path stays within the 104-byte macOS/Linux limit.
+    hash = :crypto.hash(:sha256, base_dir) |> binary_part(0, 20) |> Base.encode16(case: :lower)
+
+    xdg =
+      System.get_env("XDG_CACHE_HOME") ||
+        Path.join(System.user_home!(), ".cache")
+
+    Path.join([xdg, "instantgrep", hash])
+  end
 
   @doc """
   Build a trigram index from a directory path.
@@ -136,7 +156,7 @@ defmodule Instantgrep.Index do
   """
   @spec save(t(), String.t()) :: :ok
   def save(%__MODULE__{postings_table: pt, files_table: ft} = index, base_dir) do
-    dir = Path.join(base_dir, @index_dir)
+    dir = cache_dir(base_dir)
     File.mkdir_p!(dir)
 
     postings_data = :ets.tab2list(pt)
@@ -159,7 +179,7 @@ defmodule Instantgrep.Index do
   """
   @spec load(String.t()) :: {:ok, t()} | {:error, :not_found}
   def load(base_dir) do
-    dir = Path.join(base_dir, @index_dir)
+    dir = cache_dir(base_dir)
     postings_path = Path.join(dir, @postings_file)
     files_path = Path.join(dir, @files_file)
 

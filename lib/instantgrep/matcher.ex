@@ -9,6 +9,7 @@ defmodule Instantgrep.Matcher do
   @type match_result :: %{
           file: String.t(),
           line: pos_integer(),
+          col: pos_integer(),
           content: String.t()
         }
 
@@ -55,8 +56,8 @@ defmodule Instantgrep.Matcher do
   @spec format_results([match_result()]) :: String.t()
   def format_results(results) do
     results
-    |> Enum.map(fn %{file: f, line: l, content: c} ->
-      "#{f}:#{l}:#{c}"
+    |> Enum.map(fn %{file: f, line: l, col: col, content: c} ->
+      "#{f}:#{l}:#{col}:#{c}"
     end)
     |> Enum.join("\n")
   end
@@ -70,10 +71,14 @@ defmodule Instantgrep.Matcher do
         |> String.split("\n")
         |> Enum.with_index(1)
         |> Enum.flat_map(fn {line, line_num} ->
-          if Regex.match?(regex, line) do
-            [%{file: path, line: line_num, content: line}]
-          else
-            []
+          case Regex.run(regex, line, return: :index) do
+            [{col_byte, _len} | _] ->
+              # Convert byte offset to 1-based character column
+              col = String.length(binary_part(line, 0, col_byte)) + 1
+              [%{file: path, line: line_num, col: col, content: line}]
+
+            nil ->
+              []
           end
         end)
 

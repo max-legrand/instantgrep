@@ -8,16 +8,23 @@ defmodule Instantgrep.Scanner do
   """
 
   @default_ignores [
+    # VCS
     ~r{/\.git(/|$)},
+    ~r{/\.jj(/|$)},
+    ~r{/\.hg(/|$)},
+    ~r{/\.svn(/|$)},
+    # Dependencies / build output
     ~r{/node_modules(/|$)},
     ~r{/_build(/|$)},
     ~r{/deps(/|$)},
-    ~r{/\.instantgrep(/|$)},
+    ~r{/target(/|$)},
+    ~r{/vendor(/|$)},
+    ~r{/\.zig-cache(/|$)},
+    ~r{/zig-out(/|$)},
+    # Editors / tools
     ~r{/\.elixir_ls(/|$)},
     ~r{/\.idea(/|$)},
-    ~r{/\.vscode(/|$)},
-    ~r{/target(/|$)},
-    ~r{/vendor(/|$)}
+    ~r{/\.vscode(/|$)}
   ]
 
   @binary_extensions ~w(.png .jpg .jpeg .gif .bmp .ico .svg .woff .woff2 .ttf .eot
@@ -53,7 +60,7 @@ defmodule Instantgrep.Scanner do
         if indexable_file?(path, max_size, gitignore_patterns), do: [path], else: []
 
       File.dir?(path) ->
-        if ignored_dir?(path) do
+        if ignored_dir?(path) or gitignore_match?(path, gitignore_patterns) do
           []
         else
           path
@@ -107,7 +114,7 @@ defmodule Instantgrep.Scanner do
   end
 
   defp binary_heuristic?(data) do
-    # If more than 10% of bytes are control characters (non-text), treat as binary
+    # If more than 10% of bytes are null bytes, treat as binary
     total = byte_size(data)
 
     if total == 0 do
@@ -118,7 +125,7 @@ defmodule Instantgrep.Scanner do
           count -> count + 1
         end
 
-      null_count > 0
+      null_count / total > 0.1
     end
   end
 
@@ -134,30 +141,63 @@ defmodule Instantgrep.Scanner do
 
   defp load_gitignore(path) do
     dir = if File.dir?(path), do: path, else: Path.dirname(path)
-    gitignore_file = Path.join(dir, ".gitignore")
+    root = Path.expand(dir)
+    gitignore_file = Path.join(root, ".gitignore")
 
     if File.regular?(gitignore_file) do
       gitignore_file
       |> File.read!()
       |> String.split("\n", trim: true)
       |> Enum.reject(&(String.starts_with?(&1, "#") or String.trim(&1) == ""))
-      |> Enum.flat_map(&gitignore_to_regex/1)
+      |> Enum.flat_map(&gitignore_to_regex(&1, root))
     else
       []
     end
   end
 
-  defp gitignore_to_regex(pattern) do
+  defp gitignore_to_regex(pattern, root) do
     pattern = String.trim(pattern)
-    # Convert simple gitignore glob to regex
-    regex_str =
-      pattern
+
+    # A trailing "/" means "match directories only" — strip it for the regex
+    # (we apply the pattern to both files and directories; the directory-only
+    # check is implicit because we test directories in do_scan too).
+    {pattern, _dir_only} =
+      if String.ends_with?(pattern, "/") do
+        {String.slice(pattern, 0..-2//1), true}
+      else
+        {pattern, false}
+      end
+
+    # Patterns starting with "/" are rooted to the repo root.
+    # All others can match any path component.
+    anchored = String.starts_with?(pattern, "/")
+
+    bare =
+      if anchored do
+        String.slice(pattern, 1..-1//1)
+      else
+        pattern
+      end
+
+    # Convert gitignore glob syntax to regex
+    escaped =
+      bare
       |> String.replace(".", "\\.")
       |> String.replace("**/", "(.*/)?")
       |> String.replace("*", "[^/]*")
       |> String.replace("?", "[^/]")
 
-    case Regex.compile(regex_str) do
+    final_regex_str =
+      if anchored do
+        # Must match from the repo root exactly
+        Regex.escape(root) <> "/" <> escaped <> "(/|$)"
+      else
+        # Must match at a path-segment boundary to avoid partial-name collisions
+        # e.g. "ig" must not match inside "instantgrep"
+        "(^|/)" <> escaped <> "(/|$)"
+      end
+
+    case Regex.compile(final_regex_str) do
       {:ok, regex} -> [regex]
       _ -> []
     end
