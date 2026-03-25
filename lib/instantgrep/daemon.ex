@@ -9,10 +9,20 @@ defmodule Instantgrep.Daemon do
 
   Socket path convention: `<index_dir>/.instantgrep/daemon.sock`
 
-  Protocol:
+  Protocol (v1 — plain):
     client sends:  "<pattern>\\n"
     server sends:  "<file>:<line>:<col>:<content>\\n" (0 or more lines)
                    "\\0\\n"  (end-of-results sentinel)
+
+  Protocol (v2 — with options):
+    client sends:  "opts:<key>=<val>[,<key>=<val>...]\\n<pattern>\\n"
+    option keys:
+      flags : string  — regex flags, e.g. "i" for case-insensitive
+      glob  : string  — file glob filter, e.g. "*.rb" or "{*.rb,*.rake}"
+    server sends:  same as v1
+
+  Example:
+    "opts:flags=i,glob=*.rb\\nmy_pattern\\n"
   """
 
   alias Instantgrep.{Index, Matcher, Query}
@@ -81,36 +91,103 @@ defmodule Instantgrep.Daemon do
   end
 
   defp handle_client(sock, index) do
-    case :gen_tcp.recv(sock, 0) do
-      {:ok, line} ->
-        pattern = String.trim_trailing(line, "\n")
+    with {:ok, line1} <- :gen_tcp.recv(sock, 0) do
+      {pattern, opts} = parse_request(sock, String.trim_trailing(line1, "\n"))
 
-        case Regex.compile(pattern) do
-          {:ok, _regex} ->
-            query_tree = Query.decompose(pattern)
+      case Regex.compile(pattern, Map.get(opts, "flags", "")) do
+        {:ok, _} ->
+          query_tree = Query.decompose(pattern)
 
-            candidate_ids =
-              Query.evaluate(query_tree, fn trigram ->
-                Index.lookup(index, trigram)
-              end)
+          candidate_ids =
+            Query.evaluate(query_tree, fn trigram ->
+              lookup =
+                if String.contains?(Map.get(opts, "flags", ""), "i"),
+                  do: String.downcase(trigram),
+                  else: trigram
 
-            candidate_files = Index.resolve_files(index, candidate_ids)
-            results = Matcher.match_files(candidate_files, {pattern, ""})
-            output = Matcher.format_results(results)
+              Index.lookup(index, lookup)
+            end)
 
-            if output != "" do
-              :gen_tcp.send(sock, output <> "\n")
-            end
+          candidate_files =
+            index
+            |> Index.resolve_files(candidate_ids)
+            |> filter_glob(Map.get(opts, "glob"))
 
-          {:error, _} ->
-            :ok
-        end
+          results = Matcher.match_files(candidate_files, {pattern, Map.get(opts, "flags", "")})
+          output = Matcher.format_results(results)
 
-        :gen_tcp.send(sock, @sentinel)
-        :gen_tcp.close(sock)
+          if output != "" do
+            :gen_tcp.send(sock, output <> "\n")
+          end
 
-      {:error, _} ->
-        :gen_tcp.close(sock)
+        {:error, _} ->
+          :ok
+      end
+
+      :gen_tcp.send(sock, @sentinel)
+      :gen_tcp.close(sock)
+    else
+      {:error, _} -> :ok
+    end
+  end
+
+  # If the first line starts with "opts:", parse key=value pairs and read a
+  # second line for the pattern. Otherwise treat the line as the pattern (v1).
+  defp parse_request(sock, first_line) do
+    if String.starts_with?(first_line, "opts:") do
+      opts =
+        first_line
+        |> String.trim_leading("opts:")
+        |> String.split(",")
+        |> Enum.reduce(%{}, fn pair, acc ->
+          case String.split(pair, "=", parts: 2) do
+            [k, v] -> Map.put(acc, k, v)
+            _ -> acc
+          end
+        end)
+
+      case :gen_tcp.recv(sock, 0) do
+        {:ok, line2} -> {String.trim_trailing(line2, "\n"), opts}
+        {:error, _} -> {"", opts}
+      end
+    else
+      {first_line, %{}}
+    end
+  end
+
+  # Filter a list of file paths by a glob pattern.
+  # Supports brace expansion like `{*.rb,*.rake}` by splitting on commas inside braces.
+  defp filter_glob(files, nil), do: files
+  defp filter_glob(files, ""), do: files
+
+  defp filter_glob(files, glob) do
+    patterns = expand_glob_alts(glob)
+
+    Enum.filter(files, fn path ->
+      base = Path.basename(path)
+      Enum.any?(patterns, &glob_match?(&1, base))
+    end)
+  end
+
+  # Expand `{a,b,c}` alternatives into a list of plain globs.
+  defp expand_glob_alts(glob) do
+    case Regex.run(~r/^\{(.+)\}$/, glob) do
+      [_, inner] -> String.split(inner, ",")
+      _ -> [glob]
+    end
+  end
+
+  # Simple glob match: `*` matches any sequence of non-separator chars.
+  defp glob_match?(pattern, string) do
+    regex_str =
+      pattern
+      |> Regex.escape()
+      |> String.replace("\\*", ".*")
+      |> String.replace("\\?", ".")
+
+    case Regex.compile("^" <> regex_str <> "$") do
+      {:ok, r} -> Regex.match?(r, string)
+      _ -> false
     end
   end
 end
