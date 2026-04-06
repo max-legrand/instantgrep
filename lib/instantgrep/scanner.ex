@@ -30,7 +30,10 @@ defmodule Instantgrep.Scanner do
   ]
 
   @binary_extensions ~w(.png .jpg .jpeg .gif .bmp .ico .svg .woff .woff2 .ttf .eot
-    .mp3 .mp4 .avi .mov .pdf .zip .tar .gz .bz2 .xz .7z .rar
+    .mp3 .mp4 .avi .mov .webm .mkv .flac .ogg .wma .wmv
+    .pdf .ps .eps .doc .docx .xls .xlsx .ppt .pptx
+    .zip .tar .gz .bz2 .xz .7z .rar .br .zst .lz .lz4 .lzo
+    .apk .deb .rpm .dmg .iso .cso .gho .vhd .vdi
     .exe .dll .so .dylib .o .a .beam .class .jar .war .pyc .pyo
     .DS_Store .lock)
 
